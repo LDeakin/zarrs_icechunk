@@ -11,15 +11,15 @@
 //! // do some array/metadata manipulation with zarrs, then store a snapshot
 //! # let root_json = StoreKey::new("zarr.json").unwrap();
 //! # store.set(&root_json, r#"{"zarr_format":3,"node_type":"group"}"#.into()).await?;
-//! let snapshot0 = store.icechunk_store().commit("Commit message").await?;
+//! let snapshot0 = store.icechunk_store_mut().commit("Initial commit").await?;
 //!
 //! // do some more array/metadata manipulation, then store another snapshot
 //! # store.set(&root_json, r#"{"zarr_format":3,"node_type":"group","attributes":{"a":"b"}}"#.into()).await?;
-//! let snapshot1 = store.icechunk_store().commit("Update data").await?;
+//! let snapshot1 = store.icechunk_store_mut().commit("Update data").await?;
 //!
 //! // checkout the first snapshot
 //! store
-//!     .icechunk_store()
+//!     .icechunk_store_mut()
 //!     .checkout(icechunk::zarr::VersionInfo::SnapshotId(snapshot0))
 //!     .await?;
 //! # Ok::<_, Box<dyn std::error::Error>>(())
@@ -80,7 +80,11 @@ impl AsyncIcechunkStore {
         Self { icechunk_store }
     }
 
-    pub fn icechunk_store(&mut self) -> &mut icechunk::Store {
+    pub fn icechunk_store(&self) -> &icechunk::Store {
+        &self.icechunk_store
+    }
+
+    pub fn icechunk_store_mut(&mut self) -> &mut icechunk::Store {
         &mut self.icechunk_store
     }
 }
@@ -332,12 +336,15 @@ mod tests {
         assert_eq!(store.get(&root_json).await?, None);
         store.set(&root_json, json.clone().into()).await?;
         assert_eq!(store.get(&root_json).await?, Some(json.clone().into()));
-        let snapshot0 = store.icechunk_store().commit("create group.json").await?;
+        let snapshot0 = store
+            .icechunk_store_mut()
+            .commit("create group.json")
+            .await?;
         store.set(&root_json, json_updated.clone().into()).await?;
-        let _snapshot1 = store.icechunk_store().commit("add attributes").await?;
+        let _snapshot1 = store.icechunk_store_mut().commit("add attributes").await?;
         assert_eq!(store.get(&root_json).await?, Some(json_updated.into()));
         store
-            .icechunk_store()
+            .icechunk_store_mut()
             .checkout(icechunk::zarr::VersionInfo::SnapshotId(snapshot0))
             .await?;
         assert_eq!(store.get(&root_json).await?, Some(json.clone().into()));
