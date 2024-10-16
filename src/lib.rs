@@ -1,7 +1,29 @@
 //! [`icechunk`] store support for the [`zarrs`](https://docs.rs/zarrs/latest/zarrs/index.html) crate.
 //!
 //! ```
-//! // TODO
+//! # use std::sync::Arc;
+//! # use zarrs_storage::{AsyncWritableStorageTraits, StoreKey};
+//! # tokio_test::block_on(async {
+//! let storage = Arc::new(icechunk::ObjectStorage::new_in_memory_store(None));
+//! let icechunk_store = icechunk::Store::new_from_storage(storage).await?;
+//! let mut store = zarrs_icechunk::AsyncIcechunkStore::new(icechunk_store);
+//!
+//! // do some array/metadata manipulation with zarrs, then store a snapshot
+//! # let root_json = StoreKey::new("zarr.json").unwrap();
+//! # store.set(&root_json, r#"{"zarr_format":3,"node_type":"group"}"#.into()).await?;
+//! let snapshot0 = store.icechunk_store().commit("Commit message").await?;
+//!
+//! // do some more array/metadata manipulation, then store another snapshot
+//! # store.set(&root_json, r#"{"zarr_format":3,"node_type":"group","attributes":{"a":"b"}}"#.into()).await?;
+//! let snapshot1 = store.icechunk_store().commit("Update data").await?;
+//!
+//! // checkout the first snapshot
+//! store
+//!     .icechunk_store()
+//!     .checkout(icechunk::zarr::VersionInfo::SnapshotId(snapshot0))
+//!     .await?;
+//! # Ok::<_, Box<dyn std::error::Error>>(())
+//! # }).unwrap();
 //! ```
 //!
 //! ## Version Compatibility Matrix
@@ -253,5 +275,73 @@ impl AsyncListableStorageTraits for AsyncIcechunkStore {
 
 #[cfg(test)]
 mod tests {
-    // TODO: add tests
+    use super::*;
+    use std::{error::Error, sync::Arc};
+
+    fn remove_whitespace(s: &str) -> String {
+        s.chars().filter(|c| !c.is_whitespace()).collect()
+    }
+
+    // NOTE: The icechunk store is not a run-of-the-mill Zarr store that knows nothing about Zarr.
+    // It adds additional requirements on keys/data (like looking for known zarr metadata, c prefix, etc.)
+    // Thus it does not support the current zarrs async store test suite.
+    // The test suite could be changed to only create a structure that is actually zarr specific (standard keys, actually valid group/array json, c/ prefix etc)
+    #[tokio::test]
+    #[ignore]
+    async fn icechunk() -> Result<(), Box<dyn Error>> {
+        let storage = Arc::new(icechunk::ObjectStorage::new_in_memory_store(None));
+        let icechunk_store = icechunk::Store::new_from_storage(storage).await?;
+        let store = AsyncIcechunkStore::new(icechunk_store);
+
+        zarrs_storage::store_test::async_store_write(&store).await?;
+        zarrs_storage::store_test::async_store_read(&store).await?;
+        zarrs_storage::store_test::async_store_list(&store).await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn icechunk_time_travel() -> Result<(), Box<dyn Error>> {
+        let storage = Arc::new(icechunk::ObjectStorage::new_in_memory_store(None));
+        let icechunk_store = icechunk::Store::new_from_storage(storage).await?;
+        let mut store = AsyncIcechunkStore::new(icechunk_store);
+
+        // FIXME: Upstream: icechunk attribute serialisation is not conformant
+        // let json = r#"{
+        //     "zarr_format": 3,
+        //     "node_type": "group"
+        // }"#;
+        let json = r#"{
+            "zarr_format": 3,
+            "node_type": "group",
+            "attributes": null
+        }"#;
+        let json: String = remove_whitespace(json);
+
+        let json_updated = r#"{
+            "zarr_format": 3,
+            "node_type": "group",
+            "attributes": {
+                "icechunk": "x zarrs"
+            }
+        }"#;
+        let json_updated: String = remove_whitespace(json_updated);
+
+        let root_json = StoreKey::new("zarr.json").unwrap();
+
+        assert_eq!(store.get(&root_json).await?, None);
+        store.set(&root_json, json.clone().into()).await?;
+        assert_eq!(store.get(&root_json).await?, Some(json.clone().into()));
+        let snapshot0 = store.icechunk_store().commit("create group.json").await?;
+        store.set(&root_json, json_updated.clone().into()).await?;
+        let _snapshot1 = store.icechunk_store().commit("add attributes").await?;
+        assert_eq!(store.get(&root_json).await?, Some(json_updated.into()));
+        store
+            .icechunk_store()
+            .checkout(icechunk::zarr::VersionInfo::SnapshotId(snapshot0))
+            .await?;
+        assert_eq!(store.get(&root_json).await?, Some(json.clone().into()));
+
+        Ok(())
+    }
 }
