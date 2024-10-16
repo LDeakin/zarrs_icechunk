@@ -11,15 +11,17 @@
 //! // do some array/metadata manipulation with zarrs, then store a snapshot
 //! # let root_json = StoreKey::new("zarr.json").unwrap();
 //! # store.set(&root_json, r#"{"zarr_format":3,"node_type":"group"}"#.into()).await?;
-//! let snapshot0 = store.icechunk_store_mut().commit("Initial commit").await?;
+//! let snapshot0 = store.icechunk_store().write().await.commit("Initial commit").await?;
 //!
 //! // do some more array/metadata manipulation, then store another snapshot
 //! # store.set(&root_json, r#"{"zarr_format":3,"node_type":"group","attributes":{"a":"b"}}"#.into()).await?;
-//! let snapshot1 = store.icechunk_store_mut().commit("Update data").await?;
+//! let snapshot1 = store.icechunk_store().write().await.commit("Update data").await?;
 //!
 //! // checkout the first snapshot
 //! store
-//!     .icechunk_store_mut()
+//!     .icechunk_store()
+//!     .write()
+//!     .await
 //!     .checkout(icechunk::zarr::VersionInfo::SnapshotId(snapshot0))
 //!     .await?;
 //! # Ok::<_, Box<dyn std::error::Error>>(())
@@ -35,9 +37,12 @@
 //! - the Apache License, Version 2.0 [LICENSE-APACHE](https://docs.rs/crate/zarrs_icechunk/latest/source/LICENCE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0> or
 //! - the MIT license [LICENSE-MIT](https://docs.rs/crate/zarrs_icechunk/latest/source/LICENCE-MIT) or <http://opensource.org/licenses/MIT>, at your option.
 
+use std::sync::Arc;
+
 use futures::{future, StreamExt, TryStreamExt};
 pub use icechunk;
 
+use tokio::sync::RwLock;
 use zarrs_storage::{
     byte_range::ByteRange, AsyncBytes, AsyncListableStorageTraits, AsyncReadableStorageTraits,
     AsyncReadableWritableStorageTraits, AsyncWritableStorageTraits, MaybeAsyncBytes, StorageError,
@@ -70,22 +75,24 @@ fn handle_result<T>(result: Result<T, icechunk::zarr::StoreError>) -> Result<T, 
 
 /// An asynchronous store backed by an [`icechunk::Store`].
 pub struct AsyncIcechunkStore {
-    icechunk_store: icechunk::Store,
+    icechunk_store: Arc<RwLock<icechunk::Store>>,
 }
 
 impl AsyncIcechunkStore {
     /// Create a new [`AsyncIcechunkStore`].
     #[must_use]
     pub fn new(icechunk_store: icechunk::Store) -> Self {
-        Self { icechunk_store }
+        Self {
+            icechunk_store: Arc::new(RwLock::new(icechunk_store)),
+        }
     }
 
-    pub fn icechunk_store(&self) -> &icechunk::Store {
-        &self.icechunk_store
-    }
-
-    pub fn icechunk_store_mut(&mut self) -> &mut icechunk::Store {
-        &mut self.icechunk_store
+    /// Get a reference to the inner `icechunk::Store`.
+    // NOTE: Would prefer an async clossure rather than exposing the underlying lock
+    // e.g. with_icechunk_store/with_icechunk_store_mut(f: ...)
+    #[must_use]
+    pub fn icechunk_store(&self) -> Arc<RwLock<icechunk::Store>> {
+        self.icechunk_store.clone()
     }
 }
 
@@ -94,6 +101,8 @@ impl AsyncReadableStorageTraits for AsyncIcechunkStore {
     async fn get(&self, key: &StoreKey) -> Result<MaybeAsyncBytes, StorageError> {
         let bytes = handle_result_notfound(
             self.icechunk_store
+                .read()
+                .await
                 .get(key.as_str(), &icechunk::format::ByteRange::ALL)
                 .await,
         )?;
@@ -134,7 +143,13 @@ impl AsyncReadableStorageTraits for AsyncIcechunkStore {
                 Ok((key, byte_range))
             })
             .collect::<Result<Vec<_>, StorageError>>()?;
-        let result = handle_result(self.icechunk_store.get_partial_values(byte_ranges).await)?;
+        let result = handle_result(
+            self.icechunk_store
+                .read()
+                .await
+                .get_partial_values(byte_ranges)
+                .await,
+        )?;
         result.into_iter().map(handle_result_notfound).collect()
     }
 
@@ -149,7 +164,13 @@ impl AsyncReadableStorageTraits for AsyncIcechunkStore {
 #[async_trait::async_trait]
 impl AsyncWritableStorageTraits for AsyncIcechunkStore {
     async fn set(&self, key: &StoreKey, value: AsyncBytes) -> Result<(), StorageError> {
-        handle_result(self.icechunk_store.set(key.as_str(), value).await)?;
+        handle_result(
+            self.icechunk_store
+                .read()
+                .await
+                .set(key.as_str(), value)
+                .await,
+        )?;
         Ok(())
     }
 
@@ -159,6 +180,8 @@ impl AsyncWritableStorageTraits for AsyncIcechunkStore {
     ) -> Result<(), StorageError> {
         if self
             .icechunk_store
+            .read()
+            .await
             .supports_partial_writes()
             .map_err(handle_err)?
         {
@@ -174,8 +197,14 @@ impl AsyncWritableStorageTraits for AsyncIcechunkStore {
     }
 
     async fn erase(&self, key: &StoreKey) -> Result<(), StorageError> {
-        if self.icechunk_store.supports_deletes().map_err(handle_err)? {
-            handle_result_notfound(self.icechunk_store.delete(key.as_str()).await)?;
+        if self
+            .icechunk_store
+            .read()
+            .await
+            .supports_deletes()
+            .map_err(handle_err)?
+        {
+            handle_result_notfound(self.icechunk_store.read().await.delete(key.as_str()).await)?;
             Ok(())
         } else {
             Err(StorageError::Unsupported(
@@ -185,9 +214,17 @@ impl AsyncWritableStorageTraits for AsyncIcechunkStore {
     }
 
     async fn erase_prefix(&self, prefix: &StorePrefix) -> Result<(), StorageError> {
-        if self.icechunk_store.supports_deletes().map_err(handle_err)? {
+        if self
+            .icechunk_store
+            .read()
+            .await
+            .supports_deletes()
+            .map_err(handle_err)?
+        {
             let keys = self
                 .icechunk_store
+                .read()
+                .await
                 .list_prefix(prefix.as_str())
                 .await
                 .map_err(handle_err)?
@@ -195,7 +232,12 @@ impl AsyncWritableStorageTraits for AsyncIcechunkStore {
                 .await
                 .map_err(handle_err)?;
             for key in keys {
-                self.icechunk_store.delete(&key).await.map_err(handle_err)?;
+                self.icechunk_store
+                    .read()
+                    .await
+                    .delete(&key)
+                    .await
+                    .map_err(handle_err)?;
             }
             Ok(())
         } else {
@@ -212,7 +254,13 @@ impl AsyncReadableWritableStorageTraits for AsyncIcechunkStore {}
 #[async_trait::async_trait]
 impl AsyncListableStorageTraits for AsyncIcechunkStore {
     async fn list(&self) -> Result<StoreKeys, StorageError> {
-        let keys = self.icechunk_store.list().await.map_err(handle_err)?;
+        let keys = self
+            .icechunk_store
+            .read()
+            .await
+            .list()
+            .await
+            .map_err(handle_err)?;
         keys.map(|key| match key {
             Ok(key) => Ok(StoreKey::new(&key)?),
             Err(err) => Err(StorageError::Other(err.to_string())),
@@ -224,6 +272,8 @@ impl AsyncListableStorageTraits for AsyncIcechunkStore {
     async fn list_prefix(&self, prefix: &StorePrefix) -> Result<StoreKeys, StorageError> {
         let keys = self
             .icechunk_store
+            .read()
+            .await
             .list_prefix(prefix.as_str())
             .await
             .map_err(handle_err)?;
@@ -238,6 +288,8 @@ impl AsyncListableStorageTraits for AsyncIcechunkStore {
     async fn list_dir(&self, prefix: &StorePrefix) -> Result<StoreKeysPrefixes, StorageError> {
         let keys_prefixes = self
             .icechunk_store
+            .read()
+            .await
             .list_dir_items(prefix.as_str())
             .await
             .map_err(handle_err)?;
@@ -308,7 +360,7 @@ mod tests {
     async fn icechunk_time_travel() -> Result<(), Box<dyn Error>> {
         let storage = Arc::new(icechunk::ObjectStorage::new_in_memory_store(None));
         let icechunk_store = icechunk::Store::new_from_storage(storage).await?;
-        let mut store = AsyncIcechunkStore::new(icechunk_store);
+        let store = AsyncIcechunkStore::new(icechunk_store);
 
         // FIXME: Upstream: icechunk attribute serialisation is not conformant
         // let json = r#"{
@@ -337,14 +389,23 @@ mod tests {
         store.set(&root_json, json.clone().into()).await?;
         assert_eq!(store.get(&root_json).await?, Some(json.clone().into()));
         let snapshot0 = store
-            .icechunk_store_mut()
+            .icechunk_store
+            .write()
+            .await
             .commit("create group.json")
             .await?;
         store.set(&root_json, json_updated.clone().into()).await?;
-        let _snapshot1 = store.icechunk_store_mut().commit("add attributes").await?;
+        let _snapshot1 = store
+            .icechunk_store
+            .write()
+            .await
+            .commit("write attributes")
+            .await?;
         assert_eq!(store.get(&root_json).await?, Some(json_updated.into()));
-        store
-            .icechunk_store_mut()
+        let _snapshot1 = store
+            .icechunk_store()
+            .write()
+            .await
             .checkout(icechunk::zarr::VersionInfo::SnapshotId(snapshot0))
             .await?;
         assert_eq!(store.get(&root_json).await?, Some(json.clone().into()));

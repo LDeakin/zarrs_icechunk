@@ -14,14 +14,16 @@ let icechunk_store = icechunk::Store::new_from_storage(storage).await?;
 let mut store = zarrs_icechunk::AsyncIcechunkStore::new(icechunk_store);
 
 // do some array/metadata manipulation with zarrs, then store a snapshot
-let snapshot0 = store.icechunk_store_mut().commit("Initial commit").await?;
+let snapshot0 = store.icechunk_store().write().await.commit("Initial commit").await?;
 
 // do some more array/metadata manipulation, then store another snapshot
-let snapshot1 = store.icechunk_store_mut().commit("Update data").await?;
+let snapshot1 = store.icechunk_store().write().await.commit("Update data").await?;
 
 // checkout the first snapshot
 store
-    .icechunk_store_mut()
+    .icechunk_store()
+    .write()
+    .await
     .checkout(icechunk::zarr::VersionInfo::SnapshotId(snapshot0))
     .await?;
 ```
