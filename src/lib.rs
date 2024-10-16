@@ -13,7 +13,7 @@
 //! - the Apache License, Version 2.0 [LICENSE-APACHE](https://docs.rs/crate/zarrs_icechunk/latest/source/LICENCE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0> or
 //! - the MIT license [LICENSE-MIT](https://docs.rs/crate/zarrs_icechunk/latest/source/LICENCE-MIT) or <http://opensource.org/licenses/MIT>, at your option.
 
-use futures::{StreamExt, TryStreamExt};
+use futures::{future, StreamExt, TryStreamExt};
 pub use icechunk;
 
 use zarrs_storage::{
@@ -204,17 +204,30 @@ impl AsyncListableStorageTraits for AsyncIcechunkStore {
     }
 
     async fn list_dir(&self, prefix: &StorePrefix) -> Result<StoreKeysPrefixes, StorageError> {
-        // FIXME: Upstream: list_dir does not differentiate keys/prefixes https://github.com/earth-mover/icechunk/blob/d2cced7ef33e69291af506fcb6ca2165655b7d0c/icechunk/src/zarr.rs#L2065-L2084
-        todo!()
-        // let keys_prefixes = self
-        //     .icechunk_store
-        //     .list_dir(prefix.as_str())
-        //     .await
-        //     .map_err(handle_err)?;
-        // keys_prefixes
-        //     .map(|key_or_prefix| todo!())
-        //     .try_collect()
-        //     .await
+        let keys_prefixes = self
+            .icechunk_store
+            .list_dir_items(prefix.as_str())
+            .await
+            .map_err(handle_err)?;
+        let mut keys = vec![];
+        let mut prefixes = vec![];
+        keys_prefixes
+            .map_err(handle_err)
+            .map(|item| {
+                match item? {
+                    icechunk::zarr::ListDirItem::Key(key) => {
+                        keys.push(StoreKey::new(&key)?);
+                    }
+                    icechunk::zarr::ListDirItem::Prefix(prefix) => {
+                        prefixes.push(StorePrefix::new(&prefix)?);
+                    }
+                }
+                Ok::<_, StorageError>(())
+            })
+            .try_for_each(|_| future::ready(Ok(())))
+            .await?;
+
+        Ok(StoreKeysPrefixes::new(keys, prefixes))
     }
 
     async fn size_prefix(&self, _prefix: &StorePrefix) -> Result<u64, StorageError> {
