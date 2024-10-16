@@ -112,12 +112,11 @@ impl AsyncReadableStorageTraits for AsyncIcechunkStore {
         result.into_iter().map(handle_result_notfound).collect()
     }
 
-    async fn size_key(&self, key: &StoreKey) -> Result<Option<u64>, StorageError> {
+    async fn size_key(&self, _key: &StoreKey) -> Result<Option<u64>, StorageError> {
         // FIXME: upstream icechunk::Store lacks a method to retrieve the size of a key
-        todo!()
-        // self.get(key)
-        //     .await
-        //     .map(|bytes| bytes.map(|bytes| bytes.len() as u64))
+        Err(StorageError::Unsupported(
+            "the store does not support querying the size of a key".to_string(),
+        ))
     }
 }
 
@@ -130,14 +129,17 @@ impl AsyncWritableStorageTraits for AsyncIcechunkStore {
 
     async fn set_partial_values(
         &self,
-        key_start_values: &[StoreKeyStartValue],
+        _key_start_values: &[StoreKeyStartValue],
     ) -> Result<(), StorageError> {
         if self
             .icechunk_store
             .supports_partial_writes()
             .map_err(handle_err)?
         {
-            todo!()
+            // FIXME: Upstream: icechunk::Store does not support partial writes
+            Err(StorageError::Unsupported(
+                "the store does not support partial writes".to_string(),
+            ))
         } else {
             Err(StorageError::Unsupported(
                 "the store does not support partial writes".to_string(),
