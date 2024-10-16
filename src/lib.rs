@@ -59,18 +59,6 @@ impl AsyncIcechunkStore {
     }
 }
 
-fn byte_range_zarrs_to_icechunk(byte_range: &ByteRange) -> icechunk::format::ByteRange {
-    match byte_range {
-        ByteRange::FromStart(offset, None) => icechunk::format::ByteRange::from_offset(*offset),
-        ByteRange::FromStart(offset, Some(length)) => {
-            icechunk::format::ByteRange::from_offset_with_length(*offset, *length)
-        }
-        ByteRange::FromEnd(offset, length) => {
-            todo!()
-        }
-    }
-}
-
 #[async_trait::async_trait]
 impl AsyncReadableStorageTraits for AsyncIcechunkStore {
     async fn get(&self, key: &StoreKey) -> Result<MaybeAsyncBytes, StorageError> {
@@ -95,10 +83,27 @@ impl AsyncReadableStorageTraits for AsyncIcechunkStore {
             .iter()
             .map(|byte_range| {
                 let key = key.to_string();
-                let byte_range = byte_range_zarrs_to_icechunk(byte_range);
-                (key, byte_range)
+                let byte_range = match byte_range {
+                    ByteRange::FromStart(offset, None) => {
+                        Ok(icechunk::format::ByteRange::from_offset(*offset))
+                    }
+                    ByteRange::FromStart(offset, Some(length)) => Ok(
+                        icechunk::format::ByteRange::from_offset_with_length(*offset, *length),
+                    ),
+                    ByteRange::FromEnd(0, Some(length)) => {
+                        Ok(icechunk::format::ByteRange::Last(*length))
+                    }
+                    ByteRange::FromEnd(_offset, _length) => {
+                        // FIXME: No zarr codecs actually make a request like this, and most stores would not support it anyway
+                        // This should be changed in zarrs_storage at some point
+                        Err(StorageError::Other(
+                            "Byte ranges from the end with an offset are not supported".to_string(),
+                        ))
+                    }
+                }?;
+                Ok((key, byte_range))
             })
-            .collect();
+            .collect::<Result<Vec<_>, StorageError>>()?;
         let result = handle_result(self.icechunk_store.get_partial_values(byte_ranges).await)?;
         result.into_iter().map(handle_result_notfound).collect()
     }
