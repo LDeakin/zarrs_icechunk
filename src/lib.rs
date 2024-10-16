@@ -57,6 +57,10 @@ impl AsyncIcechunkStore {
     pub fn new(icechunk_store: icechunk::Store) -> Self {
         Self { icechunk_store }
     }
+
+    pub fn icechunk_store(&mut self) -> &mut icechunk::Store {
+        &mut self.icechunk_store
+    }
 }
 
 #[async_trait::async_trait]
