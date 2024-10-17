@@ -12,7 +12,7 @@
 // Create an icechunk store
 let storage = Arc::new(icechunk::ObjectStorage::new_in_memory_store(None));
 let icechunk_store = icechunk::Store::new_from_storage(storage).await?;
-let mut store = zarrs_icechunk::AsyncIcechunkStore::new(icechunk_store);
+let store = zarrs_icechunk::AsyncIcechunkStore::new(icechunk_store);
 
 // Do some array/metadata manipulation with zarrs, then commit a snapshot
 let snapshot0 = store.commit("Initial commit").await?;
