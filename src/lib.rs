@@ -4,26 +4,22 @@
 //! # use std::sync::Arc;
 //! # use zarrs_storage::{AsyncWritableStorageTraits, StoreKey};
 //! # tokio_test::block_on(async {
+//! // Create an icechunk store
 //! let storage = Arc::new(icechunk::ObjectStorage::new_in_memory_store(None));
 //! let icechunk_store = icechunk::Store::new_from_storage(storage).await?;
 //! let mut store = zarrs_icechunk::AsyncIcechunkStore::new(icechunk_store);
 //!
-//! // do some array/metadata manipulation with zarrs, then store a snapshot
+//! // Do some array/metadata manipulation with zarrs, then commit a snapshot
 //! # let root_json = StoreKey::new("zarr.json").unwrap();
 //! # store.set(&root_json, r#"{"zarr_format":3,"node_type":"group"}"#.into()).await?;
-//! let snapshot0 = store.icechunk_store().write().await.commit("Initial commit").await?;
+//! let snapshot0 = store.commit("Initial commit").await?;
 //!
-//! // do some more array/metadata manipulation, then store another snapshot
+//! // Do some more array/metadata manipulation, then commit another snapshot
 //! # store.set(&root_json, r#"{"zarr_format":3,"node_type":"group","attributes":{"a":"b"}}"#.into()).await?;
-//! let snapshot1 = store.icechunk_store().write().await.commit("Update data").await?;
+//! let snapshot1 = store.commit("Update data").await?;
 //!
-//! // checkout the first snapshot
-//! store
-//!     .icechunk_store()
-//!     .write()
-//!     .await
-//!     .checkout(icechunk::zarr::VersionInfo::SnapshotId(snapshot0))
-//!     .await?;
+//! // Checkout the first snapshot
+//! store.checkout(icechunk::zarr::VersionInfo::SnapshotId(snapshot0)).await?;
 //! # Ok::<_, Box<dyn std::error::Error>>(())
 //! # }).unwrap();
 //! ```
@@ -42,6 +38,7 @@ use std::sync::Arc;
 use futures::{future, StreamExt, TryStreamExt};
 pub use icechunk;
 
+use icechunk::{format::SnapshotId, refs::BranchVersion, zarr::VersionInfo};
 use tokio::sync::RwLock;
 use zarrs_storage::{
     byte_range::ByteRange, AsyncBytes, AsyncListableStorageTraits, AsyncReadableStorageTraits,
@@ -78,6 +75,12 @@ pub struct AsyncIcechunkStore {
     icechunk_store: Arc<RwLock<icechunk::Store>>,
 }
 
+impl From<Arc<RwLock<icechunk::Store>>> for AsyncIcechunkStore {
+    fn from(icechunk_store: Arc<RwLock<icechunk::Store>>) -> Self {
+        Self { icechunk_store }
+    }
+}
+
 impl AsyncIcechunkStore {
     /// Create a new [`AsyncIcechunkStore`].
     #[must_use]
@@ -87,12 +90,64 @@ impl AsyncIcechunkStore {
         }
     }
 
-    /// Get a reference to the inner `icechunk::Store`.
-    // NOTE: Would prefer an async clossure rather than exposing the underlying lock
-    // e.g. with_icechunk_store/with_icechunk_store_mut(f: ...)
+    /// Return the inner `icechunk::Store`.
     #[must_use]
     pub fn icechunk_store(&self) -> Arc<RwLock<icechunk::Store>> {
         self.icechunk_store.clone()
+    }
+
+    pub async fn current_branch(&self) -> Option<String> {
+        self.icechunk_store.read().await.current_branch().clone()
+    }
+
+    pub async fn snapshot_id(&self) -> SnapshotId {
+        self.icechunk_store.read().await.snapshot_id().await
+    }
+
+    pub async fn current_version(&self) -> VersionInfo {
+        self.icechunk_store.read().await.current_version().await
+    }
+
+    pub async fn has_uncommitted_changes(&self) -> bool {
+        self.icechunk_store
+            .read()
+            .await
+            .has_uncommitted_changes()
+            .await
+    }
+
+    pub async fn reset(&self) -> icechunk::zarr::StoreResult<()> {
+        self.icechunk_store.write().await.reset().await
+    }
+
+    pub async fn checkout(
+        &self,
+        version: icechunk::zarr::VersionInfo,
+    ) -> icechunk::zarr::StoreResult<()> {
+        self.icechunk_store.write().await.checkout(version).await
+    }
+
+    pub async fn new_branch(
+        &self,
+        branch: &str,
+    ) -> icechunk::zarr::StoreResult<(SnapshotId, BranchVersion)> {
+        self.icechunk_store.write().await.new_branch(branch).await
+    }
+
+    pub async fn commit(&self, message: &str) -> icechunk::zarr::StoreResult<SnapshotId> {
+        self.icechunk_store.write().await.commit(message).await
+    }
+
+    pub async fn tag(
+        &self,
+        tag: &str,
+        snapshot_id: &SnapshotId,
+    ) -> icechunk::zarr::StoreResult<()> {
+        self.icechunk_store
+            .write()
+            .await
+            .tag(tag, snapshot_id)
+            .await
     }
 }
 
@@ -133,7 +188,7 @@ impl AsyncReadableStorageTraits for AsyncIcechunkStore {
                         Ok(icechunk::format::ByteRange::Last(*length))
                     }
                     ByteRange::FromEnd(_offset, _length) => {
-                        // FIXME: No zarr codecs actually make a request like this, and most stores would not support it anyway
+                        // TODO: No zarr codecs actually make a request like this, and most stores would not support it anyway
                         // This should be changed in zarrs_storage at some point
                         Err(StorageError::Other(
                             "Byte ranges from the end with an offset are not supported".to_string(),
@@ -388,24 +443,11 @@ mod tests {
         assert_eq!(store.get(&root_json).await?, None);
         store.set(&root_json, json.clone().into()).await?;
         assert_eq!(store.get(&root_json).await?, Some(json.clone().into()));
-        let snapshot0 = store
-            .icechunk_store
-            .write()
-            .await
-            .commit("create group.json")
-            .await?;
+        let snapshot0 = store.commit("intial commit").await?;
         store.set(&root_json, json_updated.clone().into()).await?;
-        let _snapshot1 = store
-            .icechunk_store
-            .write()
-            .await
-            .commit("write attributes")
-            .await?;
+        let _snapshot1 = store.commit("write attributes").await?;
         assert_eq!(store.get(&root_json).await?, Some(json_updated.into()));
         let _snapshot1 = store
-            .icechunk_store()
-            .write()
-            .await
             .checkout(icechunk::zarr::VersionInfo::SnapshotId(snapshot0))
             .await?;
         assert_eq!(store.get(&root_json).await?, Some(json.clone().into()));

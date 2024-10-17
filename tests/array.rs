@@ -53,7 +53,6 @@ async fn icechunk_array() -> Result<(), Box<dyn std::error::Error>> {
         .commit("chunk0")
         .await?;
 
-
     // 1  2 | 3  4
     // 5  6 | 7  8
     // -----|-----
