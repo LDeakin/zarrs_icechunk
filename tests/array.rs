@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use icechunk::zarr::VersionInfo;
 use zarrs::{
     array::{ArrayBuilder, DataType, FillValue},
     array_subset::ArraySubset,
@@ -46,12 +47,7 @@ async fn icechunk_array() -> Result<(), Box<dyn std::error::Error>> {
     // 0  0 | 0  0
     // 0  0 | 0  0
     array.async_store_chunk(&[0, 0], &[1, 2, 0, 0]).await?;
-    let snapshot0 = store
-        .icechunk_store()
-        .write()
-        .await
-        .commit("chunk0")
-        .await?;
+    let snapshot0 = store.commit("a").await?;
 
     // 1  2 | 3  4
     // 5  6 | 7  8
@@ -67,19 +63,9 @@ async fn icechunk_array() -> Result<(), Box<dyn std::error::Error>> {
         array.async_retrieve_chunk(&[0, 0]).await?,
         vec![1, 2, 5, 6].into()
     );
-    let _snapshot1 = store
-        .icechunk_store()
-        .write()
-        .await
-        .commit("chunk0")
-        .await?;
+    let _snapshot1 = store.commit("b").await?;
 
-    store
-        .icechunk_store()
-        .write()
-        .await
-        .checkout(icechunk::zarr::VersionInfo::SnapshotId(snapshot0))
-        .await?;
+    store.checkout(VersionInfo::SnapshotId(snapshot0)).await?;
     assert_eq!(
         array.async_retrieve_chunk(&[0, 0]).await?,
         vec![1, 2, 0, 0].into()

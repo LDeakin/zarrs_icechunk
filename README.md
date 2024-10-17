@@ -15,18 +15,13 @@ let icechunk_store = icechunk::Store::new_from_storage(storage).await?;
 let mut store = zarrs_icechunk::AsyncIcechunkStore::new(icechunk_store);
 
 // Do some array/metadata manipulation with zarrs, then commit a snapshot
-let snapshot0 = store.icechunk_store().write().await.commit("Initial commit").await?;
+let snapshot0 = store.commit("Initial commit").await?;
 
 // Do some more array/metadata manipulation, then commit another snapshot
-let snapshot1 = store.icechunk_store().write().await.commit("Update data").await?;
+let snapshot1 = store.commit("Update data").await?;
 
 // Checkout the first snapshot
-store
-    .icechunk_store()
-    .write()
-    .await
-    .checkout(icechunk::zarr::VersionInfo::SnapshotId(snapshot0))
-    .await?;
+store.checkout(icechunk::zarr::VersionInfo::SnapshotId(snapshot0)).await?;
 ```
 
 ## Version Compatibility Matrix
