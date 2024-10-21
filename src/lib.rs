@@ -417,15 +417,9 @@ mod tests {
         let icechunk_store = icechunk::Store::new_from_storage(storage).await?;
         let store = AsyncIcechunkStore::new(icechunk_store);
 
-        // FIXME: Upstream: icechunk attribute serialisation is not conformant
-        // let json = r#"{
-        //     "zarr_format": 3,
-        //     "node_type": "group"
-        // }"#;
         let json = r#"{
             "zarr_format": 3,
-            "node_type": "group",
-            "attributes": null
+            "node_type": "group"
         }"#;
         let json: String = remove_whitespace(json);
 
