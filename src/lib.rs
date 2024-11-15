@@ -42,8 +42,8 @@ use icechunk::{format::SnapshotId, refs::BranchVersion, zarr::VersionInfo};
 use tokio::sync::RwLock;
 use zarrs_storage::{
     byte_range::ByteRange, AsyncBytes, AsyncListableStorageTraits, AsyncReadableStorageTraits,
-    AsyncReadableWritableStorageTraits, AsyncWritableStorageTraits, MaybeAsyncBytes, StorageError,
-    StoreKey, StoreKeyStartValue, StoreKeys, StoreKeysPrefixes, StorePrefix,
+    AsyncWritableStorageTraits, MaybeAsyncBytes, StorageError, StoreKey, StoreKeyOffsetValue,
+    StoreKeys, StoreKeysPrefixes, StorePrefix,
 };
 
 fn handle_err(err: icechunk::zarr::StoreError) -> StorageError {
@@ -179,25 +179,16 @@ impl AsyncReadableStorageTraits for AsyncIcechunkStore {
                 let key = key.to_string();
                 let byte_range = match byte_range {
                     ByteRange::FromStart(offset, None) => {
-                        Ok(icechunk::format::ByteRange::from_offset(*offset))
+                        icechunk::format::ByteRange::from_offset(*offset)
                     }
-                    ByteRange::FromStart(offset, Some(length)) => Ok(
-                        icechunk::format::ByteRange::from_offset_with_length(*offset, *length),
-                    ),
-                    ByteRange::FromEnd(0, Some(length)) => {
-                        Ok(icechunk::format::ByteRange::Last(*length))
+                    ByteRange::FromStart(offset, Some(length)) => {
+                        icechunk::format::ByteRange::from_offset_with_length(*offset, *length)
                     }
-                    ByteRange::FromEnd(_offset, _length) => {
-                        // TODO: No zarr codecs actually make a request like this, and most stores would not support it anyway
-                        // This should be changed in zarrs_storage at some point
-                        Err(StorageError::Other(
-                            "Byte ranges from the end with an offset are not supported".to_string(),
-                        ))
-                    }
-                }?;
-                Ok((key, byte_range))
+                    ByteRange::Suffix(length) => icechunk::format::ByteRange::Last(*length),
+                };
+                (key, byte_range)
             })
-            .collect::<Result<Vec<_>, StorageError>>()?;
+            .collect();
         let result = handle_result(
             self.icechunk_store
                 .read()
@@ -231,7 +222,7 @@ impl AsyncWritableStorageTraits for AsyncIcechunkStore {
 
     async fn set_partial_values(
         &self,
-        _key_start_values: &[StoreKeyStartValue],
+        _key_start_values: &[StoreKeyOffsetValue],
     ) -> Result<(), StorageError> {
         if self
             .icechunk_store
@@ -302,9 +293,6 @@ impl AsyncWritableStorageTraits for AsyncIcechunkStore {
         }
     }
 }
-
-#[async_trait::async_trait]
-impl AsyncReadableWritableStorageTraits for AsyncIcechunkStore {}
 
 #[async_trait::async_trait]
 impl AsyncListableStorageTraits for AsyncIcechunkStore {
