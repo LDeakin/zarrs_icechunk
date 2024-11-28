@@ -117,7 +117,7 @@ impl AsyncIcechunkStore {
     }
 
     pub async fn reset(&self) -> icechunk::zarr::StoreResult<()> {
-        self.icechunk_store.write().await.reset().await
+        self.icechunk_store.write().await.reset().await.map(|_| ())
     }
 
     pub async fn checkout(

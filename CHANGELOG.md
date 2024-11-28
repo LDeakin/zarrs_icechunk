@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Bump `zarrs_storage` to 0.3.0 (`zarrs` 0.18)
+- Bump `icechunk` to 0.1.0-alpha.5
 
 ## [0.1.0-alpha.0] - 2024-10-18
 
