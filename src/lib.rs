@@ -3,23 +3,32 @@
 //! ```
 //! # use std::sync::Arc;
 //! # use zarrs_storage::{AsyncWritableStorageTraits, StoreKey};
+//! # use tokio::sync::RwLock;
+//! # use std::collections::HashMap;
+//! use icechunk::{Repository, RepositoryConfig, repository::VersionInfo};
+//! use zarrs_icechunk::AsyncIcechunkStore;
 //! # tokio_test::block_on(async {
-//! // Create an icechunk store
-//! let storage = Arc::new(icechunk::ObjectStorage::new_in_memory_store(None));
-//! let icechunk_store = icechunk::Store::new_from_storage(storage).await?;
-//! let store = zarrs_icechunk::AsyncIcechunkStore::new(icechunk_store);
+//! // Create an icechunk repository
+//! let storage = icechunk::new_in_memory_storage()?;
+//! let config = RepositoryConfig::default();
+//! let repo = Repository::create(Some(config), storage, HashMap::new()).await?;
 //!
 //! // Do some array/metadata manipulation with zarrs, then commit a snapshot
+//! let session = repo.writable_session("main").await?;
+//! let store = Arc::new(AsyncIcechunkStore::new(session));
 //! # let root_json = StoreKey::new("zarr.json").unwrap();
 //! # store.set(&root_json, r#"{"zarr_format":3,"node_type":"group"}"#.into()).await?;
-//! let snapshot0 = store.commit("Initial commit").await?;
+//! let snapshot0 = store.session().write().await.commit("Initial commit", None).await?;
 //!
 //! // Do some more array/metadata manipulation, then commit another snapshot
+//! let session = repo.writable_session("main").await?;
+//! let store = Arc::new(AsyncIcechunkStore::new(session));
 //! # store.set(&root_json, r#"{"zarr_format":3,"node_type":"group","attributes":{"a":"b"}}"#.into()).await?;
-//! let snapshot1 = store.commit("Update data").await?;
+//! let snapshot1 = store.session().write().await.commit("Update data", None).await?;
 //!
 //! // Checkout the first snapshot
-//! store.checkout(icechunk::zarr::VersionInfo::SnapshotId(snapshot0)).await?;
+//! let session = repo.readonly_session(&VersionInfo::SnapshotId(snapshot0)).await?;
+//! let store = Arc::new(AsyncIcechunkStore::new(session));
 //! # Ok::<_, Box<dyn std::error::Error>>(())
 //! # }).unwrap();
 //! ```
@@ -38,7 +47,6 @@ use std::sync::Arc;
 use futures::{future, StreamExt, TryStreamExt};
 pub use icechunk;
 
-use icechunk::{format::SnapshotId, refs::BranchVersion, zarr::VersionInfo};
 use tokio::sync::RwLock;
 use zarrs_storage::{
     byte_range::ByteRange, AsyncBytes, AsyncListableStorageTraits, AsyncReadableStorageTraits,
@@ -46,18 +54,18 @@ use zarrs_storage::{
     StoreKeys, StoreKeysPrefixes, StorePrefix,
 };
 
-fn handle_err(err: icechunk::zarr::StoreError) -> StorageError {
+fn handle_err(err: icechunk::store::StoreError) -> StorageError {
     StorageError::Other(err.to_string())
 }
 
 /// Map [`icechunk::zarr::StoreError::NotFound`] to None, pass through other errors
 fn handle_result_notfound<T>(
-    result: Result<T, icechunk::zarr::StoreError>,
+    result: Result<T, icechunk::store::StoreError>,
 ) -> Result<Option<T>, StorageError> {
     match result {
         Ok(result) => Ok(Some(result)),
         Err(err) => {
-            if matches!(err, icechunk::zarr::StoreError::NotFound { .. }) {
+            if matches!(err, icechunk::store::StoreError::NotFound { .. }) {
                 Ok(None)
             } else {
                 Err(StorageError::Other(err.to_string()))
@@ -66,106 +74,69 @@ fn handle_result_notfound<T>(
     }
 }
 
-fn handle_result<T>(result: Result<T, icechunk::zarr::StoreError>) -> Result<T, StorageError> {
+fn handle_result<T>(result: Result<T, icechunk::store::StoreError>) -> Result<T, StorageError> {
     result.map_err(handle_err)
 }
 
-/// An asynchronous store backed by an [`icechunk::Store`].
+/// An asynchronous store backed by an [`icechunk::session::Session`].
 pub struct AsyncIcechunkStore {
-    icechunk_store: Arc<RwLock<icechunk::Store>>,
+    icechunk_session: Arc<RwLock<icechunk::session::Session>>,
 }
 
-impl From<Arc<RwLock<icechunk::Store>>> for AsyncIcechunkStore {
-    fn from(icechunk_store: Arc<RwLock<icechunk::Store>>) -> Self {
-        Self { icechunk_store }
+impl From<Arc<RwLock<icechunk::session::Session>>> for AsyncIcechunkStore {
+    fn from(icechunk_session: Arc<RwLock<icechunk::session::Session>>) -> Self {
+        Self { icechunk_session }
     }
 }
 
 impl AsyncIcechunkStore {
+    async fn store(&self) -> icechunk::Store {
+        icechunk::Store::from_session(self.icechunk_session.clone()).await
+    }
+
     /// Create a new [`AsyncIcechunkStore`].
     #[must_use]
-    pub fn new(icechunk_store: icechunk::Store) -> Self {
+    pub fn new(icechunk_session: icechunk::session::Session) -> Self {
         Self {
-            icechunk_store: Arc::new(RwLock::new(icechunk_store)),
+            icechunk_session: Arc::new(RwLock::new(icechunk_session)),
         }
     }
 
-    /// Return the inner `icechunk::Store`.
+    /// Return the inner [`icechunk::session::Session`].
     #[must_use]
-    pub fn icechunk_store(&self) -> Arc<RwLock<icechunk::Store>> {
-        self.icechunk_store.clone()
+    pub fn session(&self) -> Arc<RwLock<icechunk::session::Session>> {
+        self.icechunk_session.clone()
     }
 
-    pub async fn current_branch(&self) -> Option<String> {
-        self.icechunk_store.read().await.current_branch().clone()
-    }
+    // TODO: Wait for async closures
+    // // /// Run a method on the underlying session.
+    // pub async fn with_session<F, T>(&self, f: F) -> icechunk::session::SessionResult<T>
+    // where
+    //     F: async FnOnce(&icechunk::session::Session) -> icechunk::session::SessionResult<T>,
+    // {
+    //     let session = self.icechunk_session.read().await;
+    //     f(&session).await
+    // }
 
-    pub async fn snapshot_id(&self) -> SnapshotId {
-        self.icechunk_store.read().await.snapshot_id().await
-    }
-
-    pub async fn current_version(&self) -> VersionInfo {
-        self.icechunk_store.read().await.current_version().await
-    }
-
-    pub async fn has_uncommitted_changes(&self) -> bool {
-        self.icechunk_store
-            .read()
-            .await
-            .has_uncommitted_changes()
-            .await
-    }
-
-    pub async fn reset(&self) -> icechunk::zarr::StoreResult<()> {
-        self.icechunk_store.write().await.reset().await.map(|_| ())
-    }
-
-    pub async fn checkout(
-        &self,
-        version: icechunk::zarr::VersionInfo,
-    ) -> icechunk::zarr::StoreResult<()> {
-        self.icechunk_store.write().await.checkout(version).await
-    }
-
-    pub async fn new_branch(
-        &self,
-        branch: &str,
-    ) -> icechunk::zarr::StoreResult<(SnapshotId, BranchVersion)> {
-        self.icechunk_store.write().await.new_branch(branch).await
-    }
-
-    pub async fn commit(&self, message: &str) -> icechunk::zarr::StoreResult<SnapshotId> {
-        self.icechunk_store.write().await.commit(message).await
-    }
-
-    pub async fn tag(
-        &self,
-        tag: &str,
-        snapshot_id: &SnapshotId,
-    ) -> icechunk::zarr::StoreResult<()> {
-        self.icechunk_store
-            .write()
-            .await
-            .tag(tag, snapshot_id)
-            .await
-    }
+    // /// Run a mutable method on the underlying session.
+    // pub async fn with_session_mut<F, T>(&self, f: F) -> icechunk::session::SessionResult<T>
+    // where
+    //     F: async FnOnce(&icechunk::session::Session) -> icechunk::session::SessionResult<T>,
+    // {
+    //     let mut session = self.icechunk_session.write().await;
+    //     f(&mut session).await
+    // }
 }
 
 #[async_trait::async_trait]
 impl AsyncReadableStorageTraits for AsyncIcechunkStore {
     async fn get(&self, key: &StoreKey) -> Result<MaybeAsyncBytes, StorageError> {
-        let bytes = handle_result_notfound(
-            self.icechunk_store
-                .read()
+        handle_result_notfound(
+            self.store()
                 .await
                 .get(key.as_str(), &icechunk::format::ByteRange::ALL)
                 .await,
-        )?;
-        if let Some(bytes) = bytes {
-            Ok(Some(bytes))
-        } else {
-            Ok(None)
-        }
+        )
     }
 
     async fn get_partial_values_key(
@@ -189,13 +160,7 @@ impl AsyncReadableStorageTraits for AsyncIcechunkStore {
                 (key, byte_range)
             })
             .collect();
-        let result = handle_result(
-            self.icechunk_store
-                .read()
-                .await
-                .get_partial_values(byte_ranges)
-                .await,
-        )?;
+        let result = handle_result(self.store().await.get_partial_values(byte_ranges).await)?;
         result.into_iter().map(handle_result_notfound).collect()
     }
 
@@ -210,13 +175,7 @@ impl AsyncReadableStorageTraits for AsyncIcechunkStore {
 #[async_trait::async_trait]
 impl AsyncWritableStorageTraits for AsyncIcechunkStore {
     async fn set(&self, key: &StoreKey, value: AsyncBytes) -> Result<(), StorageError> {
-        handle_result(
-            self.icechunk_store
-                .read()
-                .await
-                .set(key.as_str(), value)
-                .await,
-        )?;
+        handle_result(self.store().await.set(key.as_str(), value).await)?;
         Ok(())
     }
 
@@ -225,8 +184,7 @@ impl AsyncWritableStorageTraits for AsyncIcechunkStore {
         _key_start_values: &[StoreKeyOffsetValue],
     ) -> Result<(), StorageError> {
         if self
-            .icechunk_store
-            .read()
+            .store()
             .await
             .supports_partial_writes()
             .map_err(handle_err)?
@@ -243,14 +201,8 @@ impl AsyncWritableStorageTraits for AsyncIcechunkStore {
     }
 
     async fn erase(&self, key: &StoreKey) -> Result<(), StorageError> {
-        if self
-            .icechunk_store
-            .read()
-            .await
-            .supports_deletes()
-            .map_err(handle_err)?
-        {
-            handle_result_notfound(self.icechunk_store.read().await.delete(key.as_str()).await)?;
+        if self.store().await.supports_deletes().map_err(handle_err)? {
+            handle_result_notfound(self.store().await.delete(key.as_str()).await)?;
             Ok(())
         } else {
             Err(StorageError::Unsupported(
@@ -260,16 +212,9 @@ impl AsyncWritableStorageTraits for AsyncIcechunkStore {
     }
 
     async fn erase_prefix(&self, prefix: &StorePrefix) -> Result<(), StorageError> {
-        if self
-            .icechunk_store
-            .read()
-            .await
-            .supports_deletes()
-            .map_err(handle_err)?
-        {
+        if self.store().await.supports_deletes().map_err(handle_err)? {
             let keys = self
-                .icechunk_store
-                .read()
+                .store()
                 .await
                 .list_prefix(prefix.as_str())
                 .await
@@ -278,12 +223,7 @@ impl AsyncWritableStorageTraits for AsyncIcechunkStore {
                 .await
                 .map_err(handle_err)?;
             for key in keys {
-                self.icechunk_store
-                    .read()
-                    .await
-                    .delete(&key)
-                    .await
-                    .map_err(handle_err)?;
+                self.store().await.delete(&key).await.map_err(handle_err)?;
             }
             Ok(())
         } else {
@@ -297,13 +237,7 @@ impl AsyncWritableStorageTraits for AsyncIcechunkStore {
 #[async_trait::async_trait]
 impl AsyncListableStorageTraits for AsyncIcechunkStore {
     async fn list(&self) -> Result<StoreKeys, StorageError> {
-        let keys = self
-            .icechunk_store
-            .read()
-            .await
-            .list()
-            .await
-            .map_err(handle_err)?;
+        let keys = self.store().await.list().await.map_err(handle_err)?;
         keys.map(|key| match key {
             Ok(key) => Ok(StoreKey::new(&key)?),
             Err(err) => Err(StorageError::Other(err.to_string())),
@@ -314,8 +248,7 @@ impl AsyncListableStorageTraits for AsyncIcechunkStore {
 
     async fn list_prefix(&self, prefix: &StorePrefix) -> Result<StoreKeys, StorageError> {
         let keys = self
-            .icechunk_store
-            .read()
+            .store()
             .await
             .list_prefix(prefix.as_str())
             .await
@@ -330,8 +263,7 @@ impl AsyncListableStorageTraits for AsyncIcechunkStore {
 
     async fn list_dir(&self, prefix: &StorePrefix) -> Result<StoreKeysPrefixes, StorageError> {
         let keys_prefixes = self
-            .icechunk_store
-            .read()
+            .store()
             .await
             .list_dir_items(prefix.as_str())
             .await
@@ -342,10 +274,10 @@ impl AsyncListableStorageTraits for AsyncIcechunkStore {
             .map_err(handle_err)
             .map(|item| {
                 match item? {
-                    icechunk::zarr::ListDirItem::Key(key) => {
+                    icechunk::store::ListDirItem::Key(key) => {
                         keys.push(StoreKey::new(&key)?);
                     }
-                    icechunk::zarr::ListDirItem::Prefix(prefix) => {
+                    icechunk::store::ListDirItem::Prefix(prefix) => {
                         prefixes.push(StorePrefix::new(&prefix)?);
                     }
                 }
@@ -374,8 +306,10 @@ impl AsyncListableStorageTraits for AsyncIcechunkStore {
 
 #[cfg(test)]
 mod tests {
+    use icechunk::{repository::VersionInfo, Repository, RepositoryConfig};
+
     use super::*;
-    use std::{error::Error, sync::Arc};
+    use std::{collections::HashMap, error::Error};
 
     fn remove_whitespace(s: &str) -> String {
         s.chars().filter(|c| !c.is_whitespace()).collect()
@@ -388,9 +322,10 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn icechunk() -> Result<(), Box<dyn Error>> {
-        let storage = Arc::new(icechunk::ObjectStorage::new_in_memory_store(None));
-        let icechunk_store = icechunk::Store::new_from_storage(storage).await?;
-        let store = AsyncIcechunkStore::new(icechunk_store);
+        let storage = icechunk::new_in_memory_storage()?;
+        let config = RepositoryConfig::default();
+        let repo = Repository::create(Some(config), storage, HashMap::new()).await?;
+        let store = AsyncIcechunkStore::new(repo.writable_session("main").await?);
 
         zarrs_storage::store_test::async_store_write(&store).await?;
         zarrs_storage::store_test::async_store_read(&store).await?;
@@ -401,9 +336,9 @@ mod tests {
 
     #[tokio::test]
     async fn icechunk_time_travel() -> Result<(), Box<dyn Error>> {
-        let storage = Arc::new(icechunk::ObjectStorage::new_in_memory_store(None));
-        let icechunk_store = icechunk::Store::new_from_storage(storage).await?;
-        let store = AsyncIcechunkStore::new(icechunk_store);
+        let storage = icechunk::new_in_memory_storage()?;
+        let config = RepositoryConfig::default();
+        let repo = Repository::create(Some(config), storage, HashMap::new()).await?;
 
         let json = r#"{
             "zarr_format": 3,
@@ -422,16 +357,31 @@ mod tests {
 
         let root_json = StoreKey::new("zarr.json").unwrap();
 
+        let store = AsyncIcechunkStore::new(repo.writable_session("main").await?);
         assert_eq!(store.get(&root_json).await?, None);
         store.set(&root_json, json.clone().into()).await?;
         assert_eq!(store.get(&root_json).await?, Some(json.clone().into()));
-        let snapshot0 = store.commit("intial commit").await?;
-        store.set(&root_json, json_updated.clone().into()).await?;
-        let _snapshot1 = store.commit("write attributes").await?;
-        assert_eq!(store.get(&root_json).await?, Some(json_updated.into()));
-        let _snapshot1 = store
-            .checkout(icechunk::zarr::VersionInfo::SnapshotId(snapshot0))
+        let snapshot0 = store
+            .session()
+            .write()
+            .await
+            .commit("intial commit", None)
             .await?;
+
+        let store = AsyncIcechunkStore::new(repo.writable_session("main").await?);
+        store.set(&root_json, json_updated.clone().into()).await?;
+        let _snapshot1 = store
+            .session()
+            .write()
+            .await
+            .commit("write attributes", None)
+            .await?;
+        assert_eq!(store.get(&root_json).await?, Some(json_updated.into()));
+
+        let session = repo
+            .readonly_session(&VersionInfo::SnapshotId(snapshot0))
+            .await?;
+        let store = AsyncIcechunkStore::new(session);
         assert_eq!(store.get(&root_json).await?, Some(json.clone().into()));
 
         Ok(())

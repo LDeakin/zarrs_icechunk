@@ -1,16 +1,17 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
-use icechunk::zarr::VersionInfo;
+use icechunk::{repository::VersionInfo, Repository, RepositoryConfig};
 use zarrs::{
     array::{ArrayBuilder, DataType, FillValue},
     array_subset::ArraySubset,
 };
+use zarrs_icechunk::AsyncIcechunkStore;
 
 #[tokio::test]
 async fn icechunk_array() -> Result<(), Box<dyn std::error::Error>> {
-    let storage = Arc::new(icechunk::ObjectStorage::new_in_memory_store(None));
-    let icechunk_store = icechunk::Store::new_from_storage(storage).await?;
-    let store = Arc::new(zarrs_icechunk::AsyncIcechunkStore::new(icechunk_store));
+    let storage = icechunk::new_in_memory_storage()?;
+    let config = RepositoryConfig::default();
+    let repo = Repository::create(Some(config), storage, HashMap::new()).await?;
 
     let array_path = "/array";
     let mut builder = ArrayBuilder::new(
@@ -28,6 +29,9 @@ async fn icechunk_array() -> Result<(), Box<dyn std::error::Error>> {
         .bytes_to_bytes_codecs(vec![Arc::new(zarrs::array::codec::GzipCodec::new(5)?)])
         .build(),
     ));
+
+    let session = repo.writable_session("main").await?;
+    let store = Arc::new(AsyncIcechunkStore::new(session));
     let array = builder.build(store.clone(), array_path).unwrap();
 
     array.async_store_metadata().await?;
@@ -47,7 +51,11 @@ async fn icechunk_array() -> Result<(), Box<dyn std::error::Error>> {
     // 0  0 | 0  0
     // 0  0 | 0  0
     array.async_store_chunk(&[0, 0], &[1, 2, 0, 0]).await?;
-    let snapshot0 = store.commit("a").await?;
+    let snapshot0 = store.session().write().await.commit("a", None).await?;
+
+    let session = repo.writable_session("main").await?;
+    let store = Arc::new(AsyncIcechunkStore::new(session));
+    let array = builder.build(store.clone(), array_path).unwrap();
 
     // 1  2 | 3  4
     // 5  6 | 7  8
@@ -63,9 +71,14 @@ async fn icechunk_array() -> Result<(), Box<dyn std::error::Error>> {
         array.async_retrieve_chunk(&[0, 0]).await?,
         vec![1, 2, 5, 6].into()
     );
-    let _snapshot1 = store.commit("b").await?;
+    let _snapshot1 = store.session().write().await.commit("b", None).await?;
 
-    store.checkout(VersionInfo::SnapshotId(snapshot0)).await?;
+    let session = repo
+        .readonly_session(&VersionInfo::SnapshotId(snapshot0))
+        .await?;
+    let store = Arc::new(AsyncIcechunkStore::new(session));
+    let array = builder.build(store.clone(), array_path).unwrap();
+
     assert_eq!(
         array.async_retrieve_chunk(&[0, 0]).await?,
         vec![1, 2, 0, 0].into()

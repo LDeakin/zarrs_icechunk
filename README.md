@@ -9,19 +9,30 @@
 [`icechunk`](https://crates.io/crates/icechunk) store support for the [`zarrs`](https://crates.io/crates/zarrs) Rust crate.
 
 ```rust
-// Create an icechunk store
-let storage = Arc::new(icechunk::ObjectStorage::new_in_memory_store(None));
-let icechunk_store = icechunk::Store::new_from_storage(storage).await?;
-let store = zarrs_icechunk::AsyncIcechunkStore::new(icechunk_store);
+use icechunk::{Repository, RepositoryConfig, repository::VersionInfo};
+use zarrs_icechunk::AsyncIcechunkStore;
+
+// Create an icechunk repo
+let storage = icechunk::new_in_memory_storage()?;
+let config = RepositoryConfig::default();
+let repo = Repository::create(Some(config), storage, HashMap::new()).await?;
 
 // Do some array/metadata manipulation with zarrs, then commit a snapshot
+let session = repo.writable_session("main").await?;
+let store = Arc::new(AsyncIcechunkStore::new(session));
+let array: Array<AsyncIcechunkStore> = ...;
 let snapshot0 = store.commit("Initial commit").await?;
 
 // Do some more array/metadata manipulation, then commit another snapshot
+let session = repo.writable_session("main").await?;
+let store = Arc::new(AsyncIcechunkStore::new(session));
+let array: Array<AsyncIcechunkStore> = ...;
 let snapshot1 = store.commit("Update data").await?;
 
 // Checkout the first snapshot
-store.checkout(icechunk::zarr::VersionInfo::SnapshotId(snapshot0)).await?;
+let session = repo.readonly_session(&VersionInfo::SnapshotId(snapshot0)).await?;
+let store = Arc::new(AsyncIcechunkStore::new(session));
+let array: Array<AsyncIcechunkStore> = ...;
 ```
 
 ## Version Compatibility Matrix
