@@ -21,13 +21,13 @@ let repo = Repository::create(Some(config), storage, HashMap::new()).await?;
 let session = repo.writable_session("main").await?;
 let store = Arc::new(AsyncIcechunkStore::new(session));
 let array: Array<AsyncIcechunkStore> = ...;
-let snapshot0 = store.commit("Initial commit").await?;
+let snapshot0 = store.session().write().await.commit("Initial commit", None).await?;
 
 // Do some more array/metadata manipulation, then commit another snapshot
 let session = repo.writable_session("main").await?;
 let store = Arc::new(AsyncIcechunkStore::new(session));
 let array: Array<AsyncIcechunkStore> = ...;
-let snapshot1 = store.commit("Update data").await?;
+let snapshot1 = store.session().write().await.commit("Update data", None).await?;
 
 // Checkout the first snapshot
 let session = repo.readonly_session(&VersionInfo::SnapshotId(snapshot0)).await?;
