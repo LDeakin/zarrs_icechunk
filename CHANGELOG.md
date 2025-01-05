@@ -11,10 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add `AsyncIcechunkStore::session()`
 
 ### Changed
-- Bump `icechunk` to 0.1.0-alpha.8
+- **Breaking**: Bump `icechunk` to 0.1.0-alpha.8
+- **Breaking**: Bump MSRV to 1.81
 
 ### Removed
-- Remove `AsyncIcechunkStore::{icechunk_store,current_branch,snapshot_id,current_version,has_uncommitted_changes,reset,checkout,new_branch,commit,tag}()`
+- **Breaking**: Remove `AsyncIcechunkStore::{icechunk_store,current_branch,snapshot_id,current_version,has_uncommitted_changes,reset,checkout,new_branch,commit,tag}()`
   - Instead access the underlying methods from the session with `AsyncIcechunkStore::session()`, e.g. `store.session().write().await.commit(...)`
 
 ## [0.1.0-alpha.1] - 2024-11-28
