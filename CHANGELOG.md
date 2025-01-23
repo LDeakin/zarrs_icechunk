@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `AsyncIcechunkStore` now supports `size[_{key,prefix}]`
+
 ### Changed
 - **Breaking**: Bump `icechunk` to 0.1.0-alpha.13
 

@@ -44,7 +44,7 @@
 
 use std::sync::Arc;
 
-use futures::{future, StreamExt, TryStreamExt};
+use futures::{future, stream::FuturesUnordered, StreamExt, TryStreamExt};
 pub use icechunk;
 
 use tokio::sync::RwLock;
@@ -164,11 +164,10 @@ impl AsyncReadableStorageTraits for AsyncIcechunkStore {
         result.into_iter().map(handle_result_notfound).collect()
     }
 
-    async fn size_key(&self, _key: &StoreKey) -> Result<Option<u64>, StorageError> {
-        // FIXME: upstream icechunk::Store lacks a method to retrieve the size of a key
-        Err(StorageError::Unsupported(
-            "the store does not support querying the size of a key".to_string(),
-        ))
+    // NOTE: this does not not differentiate between not found and empty
+    async fn size_key(&self, key: &StoreKey) -> Result<Option<u64>, StorageError> {
+        let key = key.to_string();
+        handle_result(self.store().await.getsize(&key).await).map(Some)
     }
 }
 
@@ -289,18 +288,24 @@ impl AsyncListableStorageTraits for AsyncIcechunkStore {
         Ok(StoreKeysPrefixes::new(keys, prefixes))
     }
 
-    async fn size_prefix(&self, _prefix: &StorePrefix) -> Result<u64, StorageError> {
-        // TODO: This can be supported by list -> sum
-        Err(StorageError::Unsupported(
-            "the store does not support querying the size of a prefix".to_string(),
-        ))
+    async fn size_prefix(&self, prefix: &StorePrefix) -> Result<u64, StorageError> {
+        let keys = self.list_prefix(prefix).await?;
+        let mut futures: FuturesUnordered<_> = keys
+            .into_iter()
+            .map(|key| async move {
+                let key = key.to_string();
+                handle_result(self.store().await.getsize(&key).await)
+            })
+            .collect();
+        let mut sum = 0;
+        while let Some(result) = futures.next().await {
+            sum += result?;
+        }
+        Ok(sum)
     }
 
     async fn size(&self) -> Result<u64, StorageError> {
-        // TODO: This can be supported by list -> sum
-        Err(StorageError::Unsupported(
-            "the store does not support querying the total size".to_string(),
-        ))
+        self.size_prefix(&StorePrefix::root()).await
     }
 }
 
