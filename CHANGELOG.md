@@ -7,8 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2025-02-08
+
 ### Changed
-- **Breaking**: Bump `icechunk` to 0.1.2
+- Bump `icechunk` to 0.1.2
   - This release had a breaking change
 
 ## [0.1.0] - 2025-02-01
@@ -48,7 +50,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial release
 
-[unreleased]: https://github.com/LDeakin/zarrs_icechunk/compare/v0.1.0...HEAD
+[unreleased]: https://github.com/LDeakin/zarrs_icechunk/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/LDeakin/zarrs_icechunk/releases/tag/v0.1.1
 [0.1.0]: https://github.com/LDeakin/zarrs_icechunk/releases/tag/v0.1.0
 [0.1.0-alpha.3]: https://github.com/LDeakin/zarrs_icechunk/releases/tag/v0.1.0-alpha.3
 [0.1.0-alpha.2]: https://github.com/LDeakin/zarrs_icechunk/releases/tag/v0.1.0-alpha.2
