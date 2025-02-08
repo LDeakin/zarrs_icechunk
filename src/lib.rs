@@ -65,7 +65,10 @@ fn handle_result_notfound<T>(
     match result {
         Ok(result) => Ok(Some(result)),
         Err(err) => {
-            if matches!(err, icechunk::store::StoreError::NotFound { .. }) {
+            if matches!(
+                err.kind(),
+                &icechunk::store::StoreErrorKind::NotFound { .. }
+            ) {
                 Ok(None)
             } else {
                 Err(StorageError::Other(err.to_string()))
