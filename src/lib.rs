@@ -9,7 +9,7 @@
 //! use zarrs_icechunk::AsyncIcechunkStore;
 //! # tokio_test::block_on(async {
 //! // Create an icechunk repository
-//! let storage = icechunk::new_in_memory_storage()?;
+//! let storage = icechunk::new_in_memory_storage().await?;
 //! let config = RepositoryConfig::default();
 //! let repo = Repository::create(Some(config), storage, HashMap::new()).await?;
 //!
@@ -330,7 +330,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn icechunk() -> Result<(), Box<dyn Error>> {
-        let storage = icechunk::new_in_memory_storage()?;
+        let storage = icechunk::new_in_memory_storage().await?;
         let config = RepositoryConfig::default();
         let repo = Repository::create(Some(config), storage, HashMap::new()).await?;
         let store = AsyncIcechunkStore::new(repo.writable_session("main").await?);
@@ -344,7 +344,7 @@ mod tests {
 
     #[tokio::test]
     async fn icechunk_time_travel() -> Result<(), Box<dyn Error>> {
-        let storage = icechunk::new_in_memory_storage()?;
+        let storage = icechunk::new_in_memory_storage().await?;
         let config = RepositoryConfig::default();
         let repo = Repository::create(Some(config), storage, HashMap::new()).await?;
 

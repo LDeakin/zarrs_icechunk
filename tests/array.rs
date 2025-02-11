@@ -9,7 +9,7 @@ use zarrs_icechunk::AsyncIcechunkStore;
 
 #[tokio::test]
 async fn icechunk_array() -> Result<(), Box<dyn std::error::Error>> {
-    let storage = icechunk::new_in_memory_storage()?;
+    let storage = icechunk::new_in_memory_storage().await?;
     let config = RepositoryConfig::default();
     let repo = Repository::create(Some(config), storage, HashMap::new()).await?;
 

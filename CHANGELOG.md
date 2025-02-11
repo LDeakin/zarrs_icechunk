@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Add `icechunk` 0.1.3 dev-dependency for tests
+  - This release had a breaking change
+
 ## [0.1.1] - 2025-02-08
 
 ### Changed
