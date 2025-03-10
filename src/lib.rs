@@ -280,7 +280,7 @@ impl AsyncListableStorageTraits for AsyncIcechunkStore {
                         keys.push(StoreKey::new(&key)?);
                     }
                     icechunk::store::ListDirItem::Prefix(prefix) => {
-                        prefixes.push(StorePrefix::new(&prefix)?);
+                        prefixes.push(StorePrefix::new(prefix + "/")?);
                     }
                 }
                 Ok::<_, StorageError>(())
