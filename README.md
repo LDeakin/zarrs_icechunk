@@ -12,8 +12,8 @@
 use icechunk::{Repository, RepositoryConfig, repository::VersionInfo};
 use zarrs_icechunk::AsyncIcechunkStore;
 
-// Create an icechunk repo
-let storage = icechunk::new_in_memory_storage()?;
+// Create an icechunk repository
+let storage = icechunk::new_in_memory_storage().await?;
 let config = RepositoryConfig::default();
 let repo = Repository::create(Some(config), storage, HashMap::new()).await?;
 
