@@ -8,6 +8,10 @@
 
 [`icechunk`](https://crates.io/crates/icechunk) store support for the [`zarrs`](https://crates.io/crates/zarrs) Rust crate.
 
+Icechunk is a transactional store that enables `git`-like version control of Zarr hierarchies.
+
+`zarrs_icechunk` can read data in a range of archival formats (e.g., [`netCDF4`](https://www.unidata.ucar.edu/software/netcdf/), [`HDF5`](https://www.hdfgroup.org/solutions/hdf5/), etc.) that are converted to `icechunk`-backed "virtual Zarr datacubes" via [`VirtualiZarr`](https://github.com/zarr-developers/VirtualiZarr).
+
 ```rust
 use icechunk::{Repository, RepositoryConfig, repository::VersionInfo};
 use zarrs_icechunk::AsyncIcechunkStore;
