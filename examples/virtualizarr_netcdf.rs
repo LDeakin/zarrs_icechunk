@@ -12,7 +12,8 @@ use zarrs_storage::StoreKey;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let storage =
-        icechunk::new_local_filesystem_storage(&Path::new("./examples/data/test.icechunk.zarr")).await?;
+        icechunk::new_local_filesystem_storage(&Path::new("./examples/data/test.icechunk.zarr"))
+            .await?;
     let config = RepositoryConfig::default();
     let repo = Repository::open(Some(config), storage, HashMap::new()).await?;
 
